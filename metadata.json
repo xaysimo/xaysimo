@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Ultimate ERP, POS & Debt Master",
+  "description": "A professional-grade ERP, POS, and Debt management system featuring multi-currency (USD/ETB), Base64 image handling, professional printing, and AI-powered insights.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
