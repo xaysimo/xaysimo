@@ -16,7 +16,7 @@ import {
   Line,
   Legend
 } from 'recharts';
-import { ShoppingBag, Users, TrendingUp, ArrowUpRight, ArrowDownRight, AlertTriangle, User, ChevronRight, Phone } from 'lucide-react';
+import { ShoppingBag, Users, TrendingUp, ArrowUpRight, ArrowDownRight, AlertTriangle, User, ChevronRight, Phone, Cloud, ShieldCheck, Database, Github, RefreshCw, Zap } from 'lucide-react';
 
 interface Props {
   data: AppData;
@@ -40,6 +40,20 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
       .sort((a, b) => b.debtBalance - a.debtBalance)
       .slice(0, 5);
   }, [activeDebtors]);
+
+  // Cloud Status Logic
+  const cloudInfo = useMemo(() => {
+    const hasGithub = !!data.settings.githubToken;
+    const hasSupabase = !!data.settings.syncSettings?.supabaseUrl;
+    const lastSync = data.settings.syncSettings?.lastSyncedAt;
+    
+    return {
+      hasGithub,
+      hasSupabase,
+      lastSync: lastSync ? new Date(lastSync).toLocaleTimeString() : 'Pending...',
+      status: hasGithub || hasSupabase ? 'Protected' : 'Local Only'
+    };
+  }, [data.settings]);
 
   // Aggregate stats by date for the last 7 days
   const dailyStats = useMemo(() => {
@@ -120,59 +134,102 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Debtors Hub Widget */}
-        <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 h-full flex flex-col">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h3 className="text-xl font-black text-slate-800 tracking-tight">Debtors Hub</h3>
-              <p className="text-xs text-slate-400 font-medium">Largest outstanding balances</p>
-            </div>
-            <Users size={20} className="text-amber-500" />
+        {/* Left Column: Debtors & Connectivity */}
+        <div className="space-y-8">
+          {/* Connectivity Status Card */}
+          <div className="bg-slate-900 p-8 rounded-[40px] shadow-2xl border border-slate-800 text-white group hover:scale-[1.02] transition-all">
+             <div className="flex items-center justify-between mb-6">
+                <div>
+                   <h3 className="text-lg font-black tracking-tight">System Connectivity</h3>
+                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Database Health Profile</p>
+                </div>
+                <Cloud size={24} className={cloudInfo.status === 'Protected' ? 'text-emerald-400' : 'text-amber-400'} />
+             </div>
+             
+             <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                   <div className="flex items-center gap-3">
+                      <Github size={16} className={cloudInfo.hasGithub ? 'text-emerald-400' : 'text-slate-500'} />
+                      <span className="text-xs font-bold">GitHub Cloud Sync</span>
+                   </div>
+                   <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${cloudInfo.hasGithub ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
+                      {cloudInfo.hasGithub ? 'ACTIVE' : 'OFF'}
+                   </span>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                   <div className="flex items-center gap-3">
+                      <Database size={16} className={cloudInfo.hasSupabase ? 'text-blue-400' : 'text-slate-500'} />
+                      <span className="text-xs font-bold">Supabase Mirroring</span>
+                   </div>
+                   <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${cloudInfo.hasSupabase ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-700 text-slate-400'}`}>
+                      {cloudInfo.hasSupabase ? 'ACTIVE' : 'OFF'}
+                   </span>
+                </div>
+             </div>
+
+             <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                   <RefreshCw size={12} className="text-slate-500 animate-spin" />
+                   <span className="text-[10px] font-black text-slate-500 uppercase">Last Global Sync</span>
+                </div>
+                <span className="text-xs font-black text-emerald-400">{cloudInfo.lastSync}</span>
+             </div>
           </div>
 
-          <div className="space-y-4 flex-1">
-            {topDebtors.map((debtor) => (
-              <div key={debtor.id} className="p-4 rounded-3xl bg-slate-50 border border-transparent hover:border-amber-100 hover:bg-amber-50/30 transition-all flex items-center justify-between group">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-300 border shadow-sm overflow-hidden">
-                    {debtor.photo ? <img src={debtor.photo} className="w-full h-full object-cover" /> : <User size={18} />}
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-slate-900">{debtor.name}</p>
-                    <p className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
-                      <Phone size={10} /> {debtor.phone}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-black text-amber-600">{formatCurrency(debtor.debtBalance, currency, rate)}</p>
-                  <p className="text-[8px] font-black uppercase text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity">Due</p>
-                </div>
+          {/* Debtors Hub Widget */}
+          <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 flex flex-col">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h3 className="text-xl font-black text-slate-800 tracking-tight">Debtors Hub</h3>
+                <p className="text-xs text-slate-400 font-medium">Largest outstanding balances</p>
               </div>
-            ))}
+              <Users size={20} className="text-amber-500" />
+            </div>
+
+            <div className="space-y-4 flex-1">
+              {topDebtors.map((debtor) => (
+                <div key={debtor.id} className="p-4 rounded-3xl bg-slate-50 border border-transparent hover:border-amber-100 hover:bg-amber-50/30 transition-all flex items-center justify-between group">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-300 border shadow-sm overflow-hidden">
+                      {debtor.photo ? <img src={debtor.photo} className="w-full h-full object-cover" /> : <User size={18} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-900">{debtor.name}</p>
+                      <p className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                        <Phone size={10} /> {debtor.phone}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-black text-amber-600">{formatCurrency(debtor.debtBalance, currency, rate)}</p>
+                  </div>
+                </div>
+              ))}
+              
+              {topDebtors.length === 0 && (
+                <div className="flex-1 flex flex-col items-center justify-center py-10 opacity-30">
+                  <Users size={40} className="mb-2" />
+                  <p className="text-[10px] font-black uppercase">No active debtors</p>
+                </div>
+              )}
+            </div>
             
-            {topDebtors.length === 0 && (
-              <div className="flex-1 flex flex-col items-center justify-center py-10 opacity-30">
-                <Users size={40} className="mb-2" />
-                <p className="text-[10px] font-black uppercase">No active debtors</p>
-              </div>
-            )}
-          </div>
-          
-          <div className="mt-8 pt-6 border-t flex justify-between items-center">
-             <div>
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Receivables</span>
-                <p className="text-lg font-black text-slate-900">
-                  {formatCurrency(activeDebtors.reduce((acc, d) => acc + d.debtBalance, 0), currency, rate)}
-                </p>
-             </div>
-             <button className="p-2 bg-slate-100 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all">
-               <ChevronRight size={20} />
-             </button>
+            <div className="mt-8 pt-6 border-t flex justify-between items-center">
+               <div>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Receivables</span>
+                  <p className="text-lg font-black text-slate-900">
+                    {formatCurrency(activeDebtors.reduce((acc, d) => acc + d.debtBalance, 0), currency, rate)}
+                  </p>
+               </div>
+               <button className="p-2 bg-slate-100 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all">
+                 <ChevronRight size={20} />
+               </button>
+            </div>
           </div>
         </div>
 
-        {/* Sales Chart */}
+        {/* Right Column: Sales Chart */}
         <div className="lg:col-span-2 space-y-8">
           <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100">
             <div className="flex items-center justify-between mb-8">
@@ -192,7 +249,7 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
               </div>
             </div>
             
-            <div className="h-[350px]">
+            <div className="h-[450px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={dailyStats}>
                   <defs>

@@ -27,7 +27,9 @@ import {
   Cloud,
   CloudOff,
   Database,
-  Github
+  Github,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import { AppTab, AppData, Currency, UserRole, AppSettings, UserProfile, AccountType } from './types';
 import Dashboard from './components/Dashboard';
@@ -48,7 +50,7 @@ import Roles from './components/Roles';
 import SettingsView from './components/SettingsView';
 import { generateId } from './lib/utils';
 import { getSupabase } from './lib/supabase';
-import { pushToGithubGist } from './lib/github';
+import { pushToGithubGist, fetchAllGists } from './lib/github';
 
 const STORAGE_KEY = 'ultimate_erp_master_data_v2';
 const AUTH_KEY = 'erp_master_auth_session';
@@ -60,7 +62,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultCurrency: Currency.USD,
   authUsername: 'doonka',
   authPassword: 'Shugri100@',
-  githubToken: '', // Token removed from defaults to avoid automatic "Bad Credentials" if revoked
+  githubToken: '', 
   currentUser: {
     name: 'Admin User',
     role: UserRole.ADMIN
@@ -112,61 +114,71 @@ const App: React.FC = () => {
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
 
+  // Initial Data Load & Cloud Recovery
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setData({ 
-          ...INITIAL_DATA, 
-          ...parsed,
-          settings: {
-            ...DEFAULT_SETTINGS,
-            ...parsed.settings,
-            syncSettings: {
-               ...DEFAULT_SETTINGS.syncSettings,
-               ...(parsed.settings?.syncSettings || {})
-            }
-          }
-        });
-      } catch (e) {
-        console.error("Failed to load data", e);
+    const loadData = async () => {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      let localData: AppData | null = null;
+
+      if (saved) {
+        try {
+          localData = JSON.parse(saved);
+        } catch (e) {
+          console.error("Failed to parse local storage", e);
+        }
       }
-    }
+
+      const mergedData = { 
+        ...INITIAL_DATA, 
+        ...localData,
+        settings: {
+          ...DEFAULT_SETTINGS,
+          ...(localData?.settings || {}),
+          syncSettings: {
+             ...DEFAULT_SETTINGS.syncSettings,
+             ...(localData?.settings?.syncSettings || {})
+          }
+        }
+      };
+
+      setData(mergedData);
+      setIsLoaded(true);
+
+      // Attempt Cloud Recovery if local storage is fresh/empty but token exists
+      if ((!localData || localData.products.length === 0) && mergedData.settings.githubToken) {
+        try {
+          setGithubSyncStatus('syncing');
+          const gists = await fetchAllGists(mergedData.settings.githubToken);
+          const dbGist = gists.find((g: any) => g.files['XAYSIMO_ERP_MASTER_DATABASE.json']);
+          if (dbGist) {
+            const response = await fetch(dbGist.files['XAYSIMO_ERP_MASTER_DATABASE.json'].raw_url);
+            const cloudData = await response.json();
+            setData(prev => ({
+              ...cloudData,
+              settings: {
+                ...cloudData.settings,
+                syncSettings: { ...cloudData.settings.syncSettings, githubGistId: dbGist.id }
+              }
+            }));
+            setGithubSyncStatus('success');
+            console.log("System restored from GitHub Cloud Database");
+          }
+        } catch (err) {
+          console.error("Cloud recovery failed", err);
+          setGithubSyncStatus('error');
+        }
+      }
+    };
+
+    loadData();
 
     const session = localStorage.getItem(AUTH_KEY);
     if (session === 'true') {
       setIsAuthenticated(true);
     }
-    
-    setIsLoaded(true);
   }, []);
 
-  useEffect(() => {
-    const supabase = getSupabase(data.settings.syncSettings?.supabaseUrl, data.settings.syncSettings?.supabaseKey);
-    if (supabase) {
-      supabase.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
-          setIsAuthenticated(true);
-          localStorage.setItem(AUTH_KEY, 'true');
-          const githubUser = session.user.user_metadata;
-          setData(prev => ({
-            ...prev,
-            settings: {
-              ...prev.settings,
-              currentUser: {
-                name: githubUser.full_name || githubUser.user_name || session.user.email,
-                role: UserRole.ADMIN,
-                avatar: githubUser.avatar_url
-              }
-            }
-          }));
-          addAuditLog('GitHub Login', `Authenticated via GitHub: ${session.user.email}`);
-        }
-      });
-    }
-  }, [data.settings.syncSettings]);
-
+  // Sync Logic
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -175,7 +187,7 @@ const App: React.FC = () => {
 
     const { syncSettings, githubToken } = data.settings;
 
-    // 1. Supabase Sync Logic
+    // 1. Supabase Sync
     if (syncSettings?.supabaseUrl && syncSettings?.supabaseKey && syncSettings?.autoSync) {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
       setSyncStatus('syncing');
@@ -183,18 +195,21 @@ const App: React.FC = () => {
         try {
           const supabase = getSupabase(syncSettings.supabaseUrl, syncSettings.supabaseKey);
           if (supabase) {
-            const { error } = await supabase.from('erp_storage').upsert({ id: 'master_data', payload: data, updated_at: new Date().toISOString() });
+            const { error } = await supabase.from('erp_storage').upsert({ 
+              id: 'master_data', 
+              payload: data, 
+              updated_at: new Date().toISOString() 
+            });
             if (error) throw error;
             setSyncStatus('success');
           }
         } catch (err) {
-          console.error("Supabase sync failed:", err);
           setSyncStatus('error');
         }
       }, 5000); 
     }
 
-    // 2. GitHub Gist Database Sync Logic
+    // 2. GitHub Gist Database Sync
     if (githubToken && syncSettings?.autoSyncGithub) {
       if (githubSyncTimerRef.current) clearTimeout(githubSyncTimerRef.current);
       setGithubSyncStatus('syncing');
@@ -214,25 +229,27 @@ const App: React.FC = () => {
             }));
           }
           setGithubSyncStatus('success');
+          // Update last sync timestamp in data
+          setData(prev => ({
+            ...prev,
+            settings: {
+              ...prev.settings,
+              syncSettings: {
+                ...prev.settings.syncSettings!,
+                lastSyncedAt: Date.now()
+              }
+            }
+          }));
         } catch (err: any) {
-          console.error("GitHub sync failed:", err.message);
           setGithubSyncStatus('error');
-          // If credentials are bad, stop auto-sync to avoid further errors
           if (err.message.includes('Bad credentials')) {
              setData(prev => ({
                ...prev,
-               settings: {
-                 ...prev.settings,
-                 syncSettings: {
-                   ...prev.settings.syncSettings!,
-                   autoSyncGithub: false
-                 }
-               }
+               settings: { ...prev.settings, syncSettings: { ...prev.settings.syncSettings!, autoSyncGithub: false }}
              }));
-             alert("GitHub Sync Error: Bad Credentials. Auto-sync has been disabled. Please update your GitHub Token in Settings.");
           }
         }
-      }, 8000);
+      }, 10000);
     }
   }, [data, isLoaded]);
 
@@ -260,9 +277,7 @@ const App: React.FC = () => {
     if (supabase) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
-        options: {
-          redirectTo: window.location.origin
-        }
+        options: { redirectTo: window.location.origin }
       });
       if (error) alert("GitHub Login Error: " + error.message);
     }
@@ -471,9 +486,9 @@ const App: React.FC = () => {
                <div className="px-4 py-2 flex items-center justify-between text-[9px] font-black uppercase tracking-tight text-slate-400">
                   <div className="flex items-center gap-2">
                     <Github size={12} className={githubSyncStatus === 'success' ? 'text-emerald-500' : githubSyncStatus === 'error' ? 'text-rose-500' : 'text-slate-500'} />
-                    <span>GitHub Database</span>
+                    <span>Cloud Database</span>
                   </div>
-                  <span className={githubSyncStatus === 'syncing' ? 'text-blue-400 animate-pulse' : githubSyncStatus === 'error' ? 'text-rose-400' : ''}>{githubSyncStatus}</span>
+                  <span className={githubSyncStatus === 'syncing' ? 'text-blue-400 animate-pulse' : githubSyncStatus === 'error' ? 'text-rose-400' : 'text-emerald-400'}>{githubSyncStatus === 'success' ? 'CONNECTED' : githubSyncStatus.toUpperCase()}</span>
                </div>
             )}
             {isSupabaseActive && (
@@ -505,8 +520,9 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             {isGithubActive && (
                <div className={`hidden lg:flex items-center gap-2 ${githubSyncStatus === 'error' ? 'bg-rose-900 text-rose-100' : 'bg-slate-900 text-white'} px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-sm`}>
+                  <div className={`w-2 h-2 rounded-full ${githubSyncStatus === 'syncing' ? 'bg-blue-400 animate-ping' : githubSyncStatus === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                   <Github size={14} className={githubSyncStatus === 'syncing' ? 'animate-spin' : ''} />
-                  {githubSyncStatus === 'syncing' ? 'Syncing Repo...' : githubSyncStatus === 'error' ? 'Sync Failed' : 'GitHub Cloud'}
+                  {githubSyncStatus === 'syncing' ? 'Syncing...' : githubSyncStatus === 'error' ? 'Cloud Err' : 'Cloud Safe'}
                </div>
             )}
             <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
