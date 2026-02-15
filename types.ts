@@ -15,6 +15,7 @@ export enum AppTab {
   DAILY_CLOSING = 'Daily Closing',
   REPORTS = 'Reports',
   AI = 'AI Insights',
+  DATABASE = 'Cloud Database',
   ROLES = 'User Roles',
   SETTINGS = 'Settings'
 }
@@ -155,19 +156,17 @@ export interface AppSettings {
   defaultCurrency: Currency;
   authUsername?: string;
   authPassword?: string;
-  githubToken?: string;
+  supabaseUrl?: string;
+  supabaseKey?: string;
   currentUser: {
     name: string;
     role: UserRole;
     avatar?: string;
   };
   syncSettings?: {
-    supabaseUrl: string;
-    supabaseKey: string;
-    autoSync: boolean;
-    autoSyncGithub?: boolean;
-    githubGistId?: string;
+    autoSyncCloud?: boolean;
     lastSyncedAt?: number;
+    dataVersion?: number;
   };
 }
 
@@ -182,4 +181,5 @@ export interface AppData {
   settings: AppSettings;
   users: UserProfile[];
   accounts: Account[];
+  lastModified?: number;
 }

@@ -19,17 +19,15 @@ import {
   LogOut,
   RefreshCcw,
   Zap,
-  PieChart,
-  Lock,
-  User as UserIcon,
-  ChevronRight,
   PackagePlus,
   Cloud,
-  CloudOff,
   Database,
-  Github,
   CheckCircle2,
-  AlertCircle
+  HardDrive,
+  Briefcase,
+  User as UserIcon,
+  Lock,
+  ChevronRight
 } from 'lucide-react';
 import { AppTab, AppData, Currency, UserRole, AppSettings, UserProfile, AccountType } from './types';
 import Dashboard from './components/Dashboard';
@@ -48,9 +46,9 @@ import Reports from './components/Reports';
 import AIInsights from './components/AIInsights';
 import Roles from './components/Roles';
 import SettingsView from './components/SettingsView';
+import CloudDatabase from './components/CloudDatabase';
 import { generateId } from './lib/utils';
-import { getSupabase } from './lib/supabase';
-import { pushToGithubGist, fetchAllGists } from './lib/github';
+import { saveToSupabase, fetchFromSupabase } from './lib/supabase';
 
 const STORAGE_KEY = 'ultimate_erp_master_data_v2';
 const AUTH_KEY = 'erp_master_auth_session';
@@ -62,16 +60,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultCurrency: Currency.USD,
   authUsername: 'doonka',
   authPassword: 'Shugri100@',
-  githubToken: '', 
+  supabaseUrl: 'https://lbayguclkcdrjuxouwjb.supabase.co', 
+  supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxiYXlndWNsa2Nkcmp1eG91d2piIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEwNjc1MTMsImV4cCI6MjA4NjY0MzUxM30.QEUQuWkNBlmKm3vX0sQcfb-crQeTOAxC39I6Dupy7lE', 
   currentUser: {
     name: 'Admin User',
     role: UserRole.ADMIN
   },
   syncSettings: {
-    supabaseUrl: '',
-    supabaseKey: '',
-    autoSync: false,
-    autoSyncGithub: false 
+    autoSyncCloud: true,
+    lastSyncedAt: 0,
+    dataVersion: 1
   }
 };
 
@@ -104,15 +102,15 @@ const App: React.FC = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isLoaded, setIsLoaded] = useState(false);
   const [globalCurrency, setGlobalCurrency] = useState<Currency>(Currency.USD);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
-  const [githubSyncStatus, setGithubSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
+  const [lastSyncedAt, setLastSyncedAt] = useState<number>(0);
   
-  const syncTimerRef = useRef<any>(null);
-  const githubSyncTimerRef = useRef<any>(null);
-
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
+  
+  const syncTimeoutRef = useRef<any>(null);
+  const isInitialLoad = useRef(true);
 
   // Initial Data Load & Cloud Recovery
   useEffect(() => {
@@ -134,123 +132,84 @@ const App: React.FC = () => {
         settings: {
           ...DEFAULT_SETTINGS,
           ...(localData?.settings || {}),
-          syncSettings: {
-             ...DEFAULT_SETTINGS.syncSettings,
-             ...(localData?.settings?.syncSettings || {})
-          }
+          supabaseUrl: DEFAULT_SETTINGS.supabaseUrl,
+          supabaseKey: DEFAULT_SETTINGS.supabaseKey
         }
       };
 
       setData(mergedData);
+      setLastSyncedAt(mergedData.settings.syncSettings?.lastSyncedAt || 0);
       setIsLoaded(true);
 
-      // Attempt Cloud Recovery if local storage is fresh/empty but token exists
-      if ((!localData || localData.products.length === 0) && mergedData.settings.githubToken) {
+      // Attempt real-time cloud pull if local storage is empty (Multi-device behavior)
+      if ((!localData || localData.products.length === 0) && mergedData.settings.supabaseUrl && mergedData.settings.supabaseKey) {
         try {
-          setGithubSyncStatus('syncing');
-          const gists = await fetchAllGists(mergedData.settings.githubToken);
-          const dbGist = gists.find((g: any) => g.files['XAYSIMO_ERP_MASTER_DATABASE.json']);
-          if (dbGist) {
-            const response = await fetch(dbGist.files['XAYSIMO_ERP_MASTER_DATABASE.json'].raw_url);
-            const cloudData = await response.json();
-            setData(prev => ({
-              ...cloudData,
-              settings: {
-                ...cloudData.settings,
-                syncSettings: { ...cloudData.settings.syncSettings, githubGistId: dbGist.id }
-              }
-            }));
-            setGithubSyncStatus('success');
-            console.log("System restored from GitHub Cloud Database");
+          setCloudSyncStatus('syncing');
+          const cloudData = await fetchFromSupabase(mergedData.settings.supabaseUrl, mergedData.settings.supabaseKey);
+          if (cloudData) {
+            setData(cloudData);
+            setLastSyncedAt(Date.now());
+            setCloudSyncStatus('success');
+          } else {
+            setCloudSyncStatus('idle');
           }
         } catch (err) {
-          console.error("Cloud recovery failed", err);
-          setGithubSyncStatus('error');
+          console.error("Startup cloud recovery failed:", err);
+          setCloudSyncStatus('error');
         }
       }
     };
 
     loadData();
 
-    const session = localStorage.getItem(AUTH_KEY);
-    if (session === 'true') {
+    if (localStorage.getItem(AUTH_KEY) === 'true') {
       setIsAuthenticated(true);
     }
   }, []);
 
-  // Sync Logic
+  // Persistence & Auto-Sync Engine
   useEffect(() => {
     if (!isLoaded) return;
-
+    
+    // Always save to local storage for offline resilience
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    document.title = data.settings.businessName || 'XAYSIMO SUPER MARKET';
+    document.title = data.settings.businessName || 'ERP Master';
 
-    const { syncSettings, githubToken } = data.settings;
-
-    // 1. Supabase Sync
-    if (syncSettings?.supabaseUrl && syncSettings?.supabaseKey && syncSettings?.autoSync) {
-      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-      setSyncStatus('syncing');
-      syncTimerRef.current = setTimeout(async () => {
-        try {
-          const supabase = getSupabase(syncSettings.supabaseUrl, syncSettings.supabaseKey);
-          if (supabase) {
-            const { error } = await supabase.from('erp_storage').upsert({ 
-              id: 'master_data', 
-              payload: data, 
-              updated_at: new Date().toISOString() 
-            });
-            if (error) throw error;
-            setSyncStatus('success');
-          }
-        } catch (err) {
-          setSyncStatus('error');
-        }
-      }, 5000); 
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      return;
     }
 
-    // 2. GitHub Gist Database Sync
-    if (githubToken && syncSettings?.autoSyncGithub) {
-      if (githubSyncTimerRef.current) clearTimeout(githubSyncTimerRef.current);
-      setGithubSyncStatus('syncing');
-      githubSyncTimerRef.current = setTimeout(async () => {
+    const { supabaseUrl, supabaseKey, syncSettings } = data.settings;
+
+    // Automatic Cloud Sync Debounce
+    if (supabaseUrl && supabaseKey && syncSettings?.autoSyncCloud) {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      
+      setCloudSyncStatus('syncing');
+      syncTimeoutRef.current = setTimeout(async () => {
         try {
-          const result = await pushToGithubGist(githubToken, data, syncSettings.githubGistId);
-          if (result?.id && result.id !== syncSettings.githubGistId) {
-            setData(prev => ({
-              ...prev,
-              settings: {
-                ...prev.settings,
-                syncSettings: {
-                  ...prev.settings.syncSettings!,
-                  githubGistId: result.id
-                }
-              }
-            }));
+          await saveToSupabase(supabaseUrl, supabaseKey, data);
+          const now = Date.now();
+          setLastSyncedAt(now);
+          setCloudSyncStatus('success');
+          
+          // Silently update local storage metadata without triggering another sync
+          const currentStorage = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+          if (currentStorage.settings) {
+            currentStorage.settings.syncSettings = { ...currentStorage.settings.syncSettings, lastSyncedAt: now };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentStorage));
           }
-          setGithubSyncStatus('success');
-          // Update last sync timestamp in data
-          setData(prev => ({
-            ...prev,
-            settings: {
-              ...prev.settings,
-              syncSettings: {
-                ...prev.settings.syncSettings!,
-                lastSyncedAt: Date.now()
-              }
-            }
-          }));
         } catch (err: any) {
-          setGithubSyncStatus('error');
-          if (err.message.includes('Bad credentials')) {
-             setData(prev => ({
-               ...prev,
-               settings: { ...prev.settings, syncSettings: { ...prev.settings.syncSettings!, autoSyncGithub: false }}
-             }));
-          }
+          console.error("Auto-sync failure:", err.message);
+          setCloudSyncStatus('error');
         }
-      }, 10000);
+      }, 5000); // Sync 5 seconds after last change
     }
+
+    return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    };
   }, [data, isLoaded]);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -262,34 +221,16 @@ const App: React.FC = () => {
       setIsAuthenticated(true);
       localStorage.setItem(AUTH_KEY, 'true');
       setLoginError('');
-      addAuditLog('Login', 'System accessed by administrator');
+      addAuditLog('Login', 'Admin accessed system');
     } else {
-      setLoginError('Invalid credentials. Please try again.');
+      setLoginError('Invalid credentials');
     }
   };
 
-  const handleGithubLogin = async () => {
-    const { supabaseUrl, supabaseKey } = data.settings.syncSettings || {};
-    if (!supabaseUrl || !supabaseKey) {
-      return alert("Please configure Supabase in settings first to enable GitHub login.");
-    }
-    const supabase = getSupabase(supabaseUrl, supabaseKey);
-    if (supabase) {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'github',
-        options: { redirectTo: window.location.origin }
-      });
-      if (error) alert("GitHub Login Error: " + error.message);
-    }
-  };
-
-  const handleLogout = async () => {
-    if (confirm('Are you sure you want to log out?')) {
-      const supabase = getSupabase(data.settings.syncSettings?.supabaseUrl, data.settings.syncSettings?.supabaseKey);
-      if (supabase) await supabase.auth.signOut();
+  const handleLogout = () => {
+    if (confirm('Log out of system?')) {
       setIsAuthenticated(false);
       localStorage.removeItem(AUTH_KEY);
-      addAuditLog('Logout', 'User session terminated');
     }
   };
 
@@ -309,7 +250,7 @@ const App: React.FC = () => {
     [UserRole.MANAGER]: [
       AppTab.DASHBOARD, AppTab.PRODUCTS, AppTab.PURCHASES, AppTab.INVOICES, AppTab.CUSTOMERS, 
       AppTab.DEBTORS, AppTab.SUPPLIERS, AppTab.STOCK, AppTab.FINANCES, 
-      AppTab.REPORTS, AppTab.AI, AppTab.DAILY_CLOSING
+      AppTab.REPORTS, AppTab.AI, AppTab.DAILY_CLOSING, AppTab.DATABASE
     ],
     [UserRole.CASHIER]: [
       AppTab.DASHBOARD, AppTab.POS, AppTab.INVOICES, AppTab.CUSTOMERS, AppTab.DAILY_CLOSING
@@ -329,139 +270,56 @@ const App: React.FC = () => {
     { tab: AppTab.SUPPLIERS, icon: Truck },
     { tab: AppTab.STOCK, icon: RefreshCcw },
     { tab: AppTab.FINANCES, icon: TrendingUp },
-    { tab: AppTab.ACCOUNTING, icon: Calculator },
+    { tab: AppTab.ACCOUNTING, icon: Briefcase },
     { tab: AppTab.DAILY_CLOSING, icon: Zap },
-    { tab: AppTab.REPORTS, icon: PieChart },
+    { tab: AppTab.REPORTS, icon: BarChart3 },
     { tab: AppTab.AI, icon: BrainCircuit },
+    { tab: AppTab.DATABASE, icon: HardDrive },
     { tab: AppTab.AUDIT, icon: History },
     { tab: AppTab.ROLES, icon: ShieldCheck },
     { tab: AppTab.SETTINGS, icon: Settings },
   ].filter(item => allowedTabs.includes(item.tab));
-
-  const renderContent = () => {
-    if (!allowedTabs.includes(activeTab)) {
-       setActiveTab(AppTab.DASHBOARD);
-       return null;
-    }
-
-    switch (activeTab) {
-      case AppTab.DASHBOARD: return <Dashboard data={data} currency={globalCurrency} />;
-      case AppTab.PRODUCTS: return <Products data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.POS: return <POS data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.PURCHASES: return <Purchases data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.INVOICES: return <Invoices data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.CUSTOMERS: return <Customers data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.DEBTORS: return <DebtorsHub data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.SUPPLIERS: return <Suppliers data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.STOCK: return <StockAdjustments data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.FINANCES: return <Finances data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.ACCOUNTING: return <Accounting data={data} setData={setData} addLog={addAuditLog} currency={globalCurrency} />;
-      case AppTab.DAILY_CLOSING: return <ZReport data={data} currency={globalCurrency} />;
-      case AppTab.REPORTS: return <Reports data={data} currency={globalCurrency} />;
-      case AppTab.AI: return <AIInsights data={data} />;
-      case AppTab.AUDIT: 
-        return (
-          <div className="p-6">
-            <h1 className="text-2xl font-bold mb-6">Audit Trail</h1>
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b">
-                  <tr>
-                    <th className="px-6 py-3 text-sm font-semibold text-slate-600">Timestamp</th>
-                    <th className="px-6 py-3 text-sm font-semibold text-slate-600">User</th>
-                    <th className="px-6 py-3 text-sm font-semibold text-slate-600">Action</th>
-                    <th className="px-6 py-3 text-sm font-semibold text-slate-600">Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {data.auditLogs.slice(0, 50).map(log => (
-                    <tr key={log.id}>
-                      <td className="px-6 py-4 text-sm">{new Date(log.timestamp).toLocaleString()}</td>
-                      <td className="px-6 py-4 text-sm font-medium">{log.user}</td>
-                      <td className="px-6 py-4 text-sm text-blue-600">{log.action}</td>
-                      <td className="px-6 py-4 text-sm text-slate-500">{log.details}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      case AppTab.ROLES: return <Roles data={data} setData={setData} addLog={addAuditLog} />;
-      case AppTab.SETTINGS: return <SettingsView data={data} setData={setData} addLog={addAuditLog} />;
-      default: return null;
-    }
-  };
 
   if (!isLoaded) return null;
 
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
-        <div className="max-w-md w-full animate-in fade-in zoom-in duration-500">
+        <div className="max-w-md w-full">
           <div className="bg-white rounded-[40px] shadow-2xl overflow-hidden">
-            <div className="p-10 bg-blue-600 text-white text-center space-y-4">
-              <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-3xl flex items-center justify-center mx-auto shadow-xl border border-white/20">
+            <div className="p-10 bg-blue-600 text-white text-center">
+              <div className="w-20 h-20 bg-white/20 rounded-3xl flex items-center justify-center mx-auto mb-4">
                 <Zap size={40} className="fill-white" />
               </div>
-              <div>
-                <h1 className="text-3xl font-black tracking-tight uppercase">{data.settings.businessName}</h1>
-                <p className="text-sm font-medium opacity-80 uppercase tracking-widest mt-1">Management Portal Login</p>
-              </div>
+              <h1 className="text-3xl font-black uppercase">{data.settings.businessName}</h1>
+              <p className="text-sm opacity-80 mt-1 uppercase tracking-widest">Enterprise Portal</p>
             </div>
 
-            <form onSubmit={handleLogin} className="p-10 space-y-6 pb-2">
+            <form onSubmit={handleLogin} className="p-10 space-y-6">
               {loginError && (
-                <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-black uppercase tracking-tight text-center border border-red-100 animate-bounce">
+                <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-black uppercase text-center border border-red-100">
                   {loginError}
                 </div>
               )}
-              
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Username</label>
-                  <div className="relative">
-                    <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-                    <input type="text" autoFocus required className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-slate-800 transition-all" placeholder="Enter username" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} />
-                  </div>
+                  <input type="text" required className="w-full px-5 py-4 bg-slate-50 border-none rounded-2xl outline-none font-bold" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} />
                 </div>
-
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-                    <input type="password" required className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-slate-800 transition-all" placeholder="Enter password" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
-                  </div>
+                  <input type="password" required className="w-full px-5 py-4 bg-slate-50 border-none rounded-2xl outline-none font-bold" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
                 </div>
               </div>
-
-              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl shadow-blue-900/20 hover:bg-blue-700 transition-all flex items-center justify-center gap-3 active:scale-95">
-                Sign In <ChevronRight size={20} />
+              <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all">
+                Sign In
               </button>
             </form>
-
-            <div className="px-10 pb-10 space-y-4">
-               <div className="flex items-center gap-4 text-slate-300">
-                  <div className="h-px flex-1 bg-slate-100"></div>
-                  <span className="text-[10px] font-black uppercase">Or connect with</span>
-                  <div className="h-px flex-1 bg-slate-100"></div>
-               </div>
-               <button onClick={handleGithubLogin} className="w-full py-4 bg-slate-900 text-white rounded-3xl font-black text-sm flex items-center justify-center gap-3 hover:bg-black transition-all active:scale-95">
-                  <Github size={20} /> Continue with GitHub
-               </button>
-            </div>
-
-            <div className="p-6 bg-slate-50 text-center border-t">
-              <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Enterprise Resource Planning v2.0</p>
-            </div>
           </div>
         </div>
       </div>
     );
   }
-
-  const isSupabaseActive = data.settings.syncSettings?.supabaseUrl && data.settings.syncSettings?.supabaseKey;
-  const isGithubActive = !!data.settings.githubToken;
 
   return (
     <div className="flex min-h-screen">
@@ -473,43 +331,23 @@ const App: React.FC = () => {
           <span className="font-bold text-xl text-white truncate uppercase">{data.settings.businessName}</span>
         </div>
         
-        <nav className="p-4 space-y-1 overflow-y-auto h-[calc(100vh-250px)] scrollbar-hide">
+        <nav className="p-4 space-y-1 overflow-y-auto h-[calc(100vh-160px)] scrollbar-hide">
           {menuItems.map(({ tab, icon: Icon }) => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === tab ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-800 hover:text-white'}`}>
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl text-sm font-bold tracking-tight transition-all ${activeTab === tab ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
               <Icon size={18} /> {tab}
             </button>
           ))}
         </nav>
 
-        <div className="absolute bottom-0 w-full bg-slate-900 flex flex-col border-t border-slate-800">
-            {isGithubActive && (
-               <div className="px-4 py-2 flex items-center justify-between text-[9px] font-black uppercase tracking-tight text-slate-400">
-                  <div className="flex items-center gap-2">
-                    <Github size={12} className={githubSyncStatus === 'success' ? 'text-emerald-500' : githubSyncStatus === 'error' ? 'text-rose-500' : 'text-slate-500'} />
-                    <span>Cloud Database</span>
-                  </div>
-                  <span className={githubSyncStatus === 'syncing' ? 'text-blue-400 animate-pulse' : githubSyncStatus === 'error' ? 'text-rose-400' : 'text-emerald-400'}>{githubSyncStatus === 'success' ? 'CONNECTED' : githubSyncStatus.toUpperCase()}</span>
-               </div>
-            )}
-            {isSupabaseActive && (
-              <div className="px-4 py-2 flex items-center justify-between text-[9px] font-black uppercase tracking-tight text-slate-400">
-                <div className="flex items-center gap-2">
-                  <Database size={12} className={syncStatus === 'success' ? 'text-blue-500' : 'text-slate-500'} />
-                  <span>Cloud DB (Supabase)</span>
-                </div>
-                <span className={syncStatus === 'syncing' ? 'text-blue-400 animate-pulse' : ''}>{syncStatus}</span>
-              </div>
-            )}
-            <div className="p-4">
-              <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors">
-                <LogOut size={18} /> Logout
-              </button>
-            </div>
+        <div className="absolute bottom-0 w-full p-4 bg-slate-900 border-t border-slate-800">
+          <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors">
+            <LogOut size={18} /> Logout
+          </button>
         </div>
       </aside>
 
       <main className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarOpen ? 'md:ml-64' : 'ml-0'}`}>
-        <header className="no-print h-16 bg-white border-b flex items-center justify-between px-6 sticky top-0 z-10">
+        <header className="no-print h-16 bg-white border-b flex items-center justify-between px-6 sticky top-0 z-40 backdrop-blur-md bg-white/80">
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500">
               <Menu size={20} />
@@ -518,31 +356,41 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4">
-            {isGithubActive && (
-               <div className={`hidden lg:flex items-center gap-2 ${githubSyncStatus === 'error' ? 'bg-rose-900 text-rose-100' : 'bg-slate-900 text-white'} px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-sm`}>
-                  <div className={`w-2 h-2 rounded-full ${githubSyncStatus === 'syncing' ? 'bg-blue-400 animate-ping' : githubSyncStatus === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                  <Github size={14} className={githubSyncStatus === 'syncing' ? 'animate-spin' : ''} />
-                  {githubSyncStatus === 'syncing' ? 'Syncing...' : githubSyncStatus === 'error' ? 'Cloud Err' : 'Cloud Safe'}
-               </div>
-            )}
-            <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
-              <button onClick={() => setGlobalCurrency(Currency.USD)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${globalCurrency === Currency.USD ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>USD</button>
-              <button onClick={() => setGlobalCurrency(Currency.ETB)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${globalCurrency === Currency.ETB ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>ETB</button>
+            <div className={`hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${cloudSyncStatus === 'success' ? 'bg-emerald-50 text-emerald-600' : cloudSyncStatus === 'error' ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+               <div className={`w-2 h-2 rounded-full ${cloudSyncStatus === 'syncing' ? 'bg-blue-400 animate-pulse' : cloudSyncStatus === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+               {cloudSyncStatus === 'syncing' ? 'Syncing...' : cloudSyncStatus === 'success' ? 'Cloud Saved' : 'Cloud Error'}
             </div>
-            <div className="flex items-center gap-2 border-l pl-4">
-              <div className="text-right hidden sm:block">
-                <p className="text-xs font-bold text-slate-900 leading-tight">{data.settings.currentUser.name}</p>
-                <p className="text-[10px] text-slate-500 uppercase tracking-tighter">{data.settings.currentUser.role}</p>
-              </div>
-              <div className="w-9 h-9 rounded-xl bg-slate-100 overflow-hidden border-2 border-white shadow-sm">
-                {data.settings.currentUser.avatar ? <img src={data.settings.currentUser.avatar} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-blue-600 font-bold text-sm">{data.settings.currentUser.name.charAt(0)}</div>}
-              </div>
+            <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
+              <button onClick={() => setGlobalCurrency(Currency.USD)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${globalCurrency === Currency.USD ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>USD</button>
+              <button onClick={() => setGlobalCurrency(Currency.ETB)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${globalCurrency === Currency.ETB ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>ETB</button>
             </div>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto bg-slate-50">
-          {renderContent()}
+          {(() => {
+            const commonProps = { data, setData, addLog: addAuditLog, currency: globalCurrency };
+            switch (activeTab) {
+              case AppTab.DASHBOARD: return <Dashboard data={data} currency={globalCurrency} setActiveTab={setActiveTab} />;
+              case AppTab.PRODUCTS: return <Products {...commonProps} />;
+              case AppTab.POS: return <POS {...commonProps} />;
+              case AppTab.PURCHASES: return <Purchases {...commonProps} />;
+              case AppTab.INVOICES: return <Invoices {...commonProps} />;
+              case AppTab.CUSTOMERS: return <Customers {...commonProps} />;
+              case AppTab.DEBTORS: return <DebtorsHub {...commonProps} />;
+              case AppTab.SUPPLIERS: return <Suppliers {...commonProps} />;
+              case AppTab.STOCK: return <StockAdjustments {...commonProps} />;
+              case AppTab.FINANCES: return <Finances {...commonProps} />;
+              case AppTab.ACCOUNTING: return <Accounting {...commonProps} />;
+              case AppTab.DAILY_CLOSING: return <ZReport data={data} currency={globalCurrency} />;
+              case AppTab.REPORTS: return <Reports data={data} currency={globalCurrency} />;
+              case AppTab.AI: return <AIInsights data={data} />;
+              case AppTab.DATABASE: return <CloudDatabase {...commonProps} cloudSyncStatus={cloudSyncStatus} setCloudSyncStatus={setCloudSyncStatus} />;
+              case AppTab.ROLES: return <Roles data={data} setData={setData} addLog={addAuditLog} />;
+              case AppTab.SETTINGS: return <SettingsView data={data} setData={setData} addLog={addAuditLog} />;
+              default: return <Dashboard data={data} currency={globalCurrency} setActiveTab={setActiveTab} />;
+            }
+          })()}
         </div>
       </main>
     </div>

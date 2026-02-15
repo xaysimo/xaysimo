@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { AppData, Currency, AccountType } from '../types';
+import { AppData, Currency, AccountType, AppTab } from '../types';
 import { formatCurrency } from '../lib/utils';
 import { 
   BarChart, 
@@ -16,14 +16,15 @@ import {
   Line,
   Legend
 } from 'recharts';
-import { ShoppingBag, Users, TrendingUp, ArrowUpRight, ArrowDownRight, AlertTriangle, User, ChevronRight, Phone, Cloud, ShieldCheck, Database, Github, RefreshCw, Zap } from 'lucide-react';
+import { ShoppingBag, Users, TrendingUp, ArrowUpRight, ArrowDownRight, AlertTriangle, User, ChevronRight, Phone, Cloud, Database, RefreshCw } from 'lucide-react';
 
 interface Props {
   data: AppData;
   currency: Currency;
+  setActiveTab: (tab: AppTab) => void;
 }
 
-const Dashboard: React.FC<Props> = ({ data, currency }) => {
+const Dashboard: React.FC<Props> = ({ data, currency, setActiveTab }) => {
   const rate = data.settings.exchangeRate;
 
   const totalSales = data.transactions.reduce((acc, t) => acc + t.total, 0);
@@ -43,15 +44,13 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
 
   // Cloud Status Logic
   const cloudInfo = useMemo(() => {
-    const hasGithub = !!data.settings.githubToken;
-    const hasSupabase = !!data.settings.syncSettings?.supabaseUrl;
+    const hasSupabase = !!data.settings.supabaseKey && !!data.settings.supabaseUrl;
     const lastSync = data.settings.syncSettings?.lastSyncedAt;
     
     return {
-      hasGithub,
       hasSupabase,
       lastSync: lastSync ? new Date(lastSync).toLocaleTimeString() : 'Pending...',
-      status: hasGithub || hasSupabase ? 'Protected' : 'Local Only'
+      status: hasSupabase ? 'Cloud Protected' : 'Local Only'
     };
   }, [data.settings]);
 
@@ -59,7 +58,6 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
   const dailyStats = useMemo(() => {
     const statsMap: Record<string, { revenue: number, profit: number }> = {};
     
-    // Initialize last 7 days
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
@@ -110,7 +108,6 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
 
   return (
     <div className="p-6 space-y-8 animate-in fade-in duration-500">
-      {/* Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, i) => (
           <div key={i} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between hover:shadow-xl transition-all group">
@@ -134,50 +131,46 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Debtors & Connectivity */}
         <div className="space-y-8">
-          {/* Connectivity Status Card */}
-          <div className="bg-slate-900 p-8 rounded-[40px] shadow-2xl border border-slate-800 text-white group hover:scale-[1.02] transition-all">
-             <div className="flex items-center justify-between mb-6">
-                <div>
-                   <h3 className="text-lg font-black tracking-tight">System Connectivity</h3>
-                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Database Health Profile</p>
-                </div>
-                <Cloud size={24} className={cloudInfo.status === 'Protected' ? 'text-emerald-400' : 'text-amber-400'} />
+          <button 
+            onClick={() => setActiveTab(AppTab.DATABASE)}
+            className="w-full bg-slate-900 p-8 rounded-[40px] shadow-2xl border border-slate-800 text-white text-left group hover:scale-[1.02] transition-all relative overflow-hidden"
+          >
+             <div className="absolute top-0 right-0 p-4 opacity-10">
+                <Database size={120} />
              </div>
              
-             <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
-                   <div className="flex items-center gap-3">
-                      <Github size={16} className={cloudInfo.hasGithub ? 'text-emerald-400' : 'text-slate-500'} />
-                      <span className="text-xs font-bold">GitHub Cloud Sync</span>
-                   </div>
-                   <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${cloudInfo.hasGithub ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
-                      {cloudInfo.hasGithub ? 'ACTIVE' : 'OFF'}
-                   </span>
+             <div className="flex items-center justify-between mb-6 relative z-10">
+                <div>
+                   <h3 className="text-lg font-black tracking-tight">Supabase Cloud</h3>
+                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">PostgreSQL Data Safe</p>
                 </div>
-
-                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                <div className={`p-2 rounded-xl ${cloudInfo.status === 'Cloud Protected' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                   <Cloud size={24} />
+                </div>
+             </div>
+             
+             <div className="space-y-4 relative z-10">
+                <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10 group-hover:bg-white/10 transition-colors">
                    <div className="flex items-center gap-3">
-                      <Database size={16} className={cloudInfo.hasSupabase ? 'text-blue-400' : 'text-slate-500'} />
+                      <Database size={16} className={cloudInfo.hasSupabase ? 'text-emerald-400' : 'text-slate-500'} />
                       <span className="text-xs font-bold">Supabase Mirroring</span>
                    </div>
-                   <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${cloudInfo.hasSupabase ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-700 text-slate-400'}`}>
+                   <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${cloudInfo.hasSupabase ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
                       {cloudInfo.hasSupabase ? 'ACTIVE' : 'OFF'}
                    </span>
                 </div>
              </div>
 
-             <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
+             <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between relative z-10">
                 <div className="flex items-center gap-2">
                    <RefreshCw size={12} className="text-slate-500 animate-spin" />
-                   <span className="text-[10px] font-black text-slate-500 uppercase">Last Global Sync</span>
+                   <span className="text-[10px] font-black text-slate-500 uppercase">Last Mirror Sync</span>
                 </div>
                 <span className="text-xs font-black text-emerald-400">{cloudInfo.lastSync}</span>
              </div>
-          </div>
+          </button>
 
-          {/* Debtors Hub Widget */}
           <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 flex flex-col">
             <div className="flex items-center justify-between mb-8">
               <div>
@@ -222,16 +215,15 @@ const Dashboard: React.FC<Props> = ({ data, currency }) => {
                     {formatCurrency(activeDebtors.reduce((acc, d) => acc + d.debtBalance, 0), currency, rate)}
                   </p>
                </div>
-               <button className="p-2 bg-slate-100 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all">
+               <button onClick={() => setActiveTab(AppTab.DEBTORS)} className="p-2 bg-slate-100 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all">
                  <ChevronRight size={20} />
                </button>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Sales Chart */}
         <div className="lg:col-span-2 space-y-8">
-          <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100">
+          <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h3 className="text-xl font-black text-slate-800 tracking-tight">Revenue vs. Profit</h3>
