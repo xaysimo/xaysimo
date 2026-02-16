@@ -7,14 +7,21 @@
     <title>ERP & POS Master</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
       body { font-family: 'Inter', sans-serif; }
       
       @media print {
         .no-print { display: none !important; }
         .print-only { display: block !important; }
-        @page { margin: 15mm; }
-        body { background: white !important; color: black !important; }
+        @page { 
+          margin: 10mm;
+          size: auto;
+        }
+        body { background: white !important; color: black !important; padding: 0 !important; }
+        
+        /* Reset containers for print */
+        main { margin-left: 0 !important; width: 100% !important; }
+        .max-w-6xl, .max-w-2xl, .max-w-7xl { max-width: 100% !important; width: 100% !important; margin: 0 !important; }
         
         /* Ensure cards and tables look like paper documents */
         .bg-white { background: white !important; border: none !important; box-shadow: none !important; }
@@ -22,13 +29,13 @@
         .rounded-[40px], .rounded-3xl, .rounded-2xl { border-radius: 0 !important; }
         .border { border: 1px solid #eee !important; }
         
-        /* Receipt specialized sizing if needed */
-        .receipt-print {
-          width: 80mm;
-          font-family: 'Courier New', Courier, monospace;
-          font-size: 12px;
-          margin: 0 auto;
-        }
+        /* Force background colors for specific accents in print */
+        .bg-slate-900, .bg-black { background-color: black !important; color: white !important; -webkit-print-color-adjust: exact; }
+        .text-blue-600 { color: #000 !important; font-weight: 900 !important; }
+        
+        /* Better table rendering */
+        table { width: 100% !important; border-collapse: collapse !important; }
+        th, td { border-bottom: 1px solid #ddd !important; }
         
         /* Hide scrollbars during print */
         ::-webkit-scrollbar { display: none; }
@@ -61,4 +68,4 @@
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
 </body>
-</html>''
+</html>

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { AppData, Currency, AccountType, UserRole } from '../types';
-import { Save, RefreshCw, Download, Upload, TrendingUp, Database, ShieldCheck, Key, Search, Globe, AlertTriangle, Info } from 'lucide-react';
+import { Save, RefreshCw, Database, ShieldCheck, Search, Globe, TrendingUp, Trash2, RotateCcw, Package, AlertTriangle } from 'lucide-react';
 import { saveToSupabase, fetchFromSupabase } from '../lib/supabase';
 
 interface Props {
@@ -21,32 +21,48 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
     alert('Settings saved successfully!');
   };
 
-  const backupData = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `erp_backup_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
+  const handleFreshFinancialStart = () => {
+    if (confirm("🔄 FRESH FINANCIAL START: This will reset all ledger balances, sales history, expenses, and debts to ZERO.\n\nYour PRODUCT LIST and SETTINGS will be kept. Continue?")) {
+      if (confirm("FINAL CONFIRMATION: Are you sure you want to clear all money records and start fresh?")) {
+        setData(prev => ({
+          ...prev,
+          // Zero money
+          accounts: prev.accounts.map(acc => ({ ...acc, balance: 0 })),
+          customers: prev.customers.map(cust => ({ ...cust, debtBalance: 0, loyaltyPoints: 0 })),
+          suppliers: prev.suppliers.map(supp => ({ ...supp, balance: 0 })),
+          // Clear history
+          transactions: [],
+          expenses: [],
+          stockAdjustments: [],
+          // We EXPLICITLY do NOT zero products or settings here
+          lastModified: Date.now()
+        }));
+        addLog('System Reset', 'Fresh Financial Start: Cleared history and balances, kept product list.');
+        alert('Financial reset complete. All money records and history have been cleared.');
+      }
+    }
   };
 
-  const restoreData = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const imported = JSON.parse(event.target?.result as string);
-          if (confirm("Restore this backup? This will overwrite ALL current data.")) {
-            setData(imported);
-            addLog('Data Restore', 'System data restored from local backup');
-            window.location.reload();
-          }
-        } catch (err) {
-          alert("Invalid backup file.");
-        }
-      };
-      reader.readAsText(file);
+  const handleMasterClear = () => {
+    if (confirm("⚠️ MASTER CLEAR: This will reset ALL money balances to $0 AND ALL product stock to 0.\n\nTransactions and expense history will also be permanently deleted. Continue?")) {
+      if (confirm("FINAL CONFIRMATION: Are you absolutely sure? This action cannot be undone.")) {
+        setData(prev => ({
+          ...prev,
+          // Zero money
+          accounts: prev.accounts.map(acc => ({ ...acc, balance: 0 })),
+          customers: prev.customers.map(cust => ({ ...cust, debtBalance: 0, loyaltyPoints: 0 })),
+          suppliers: prev.suppliers.map(supp => ({ ...supp, balance: 0 })),
+          // Zero items
+          products: prev.products.map(p => ({ ...p, stock: 0 })),
+          // Clear history
+          transactions: [],
+          expenses: [],
+          stockAdjustments: [],
+          lastModified: Date.now()
+        }));
+        addLog('System Reset', 'Master Clear performed: All balances and stock zeroed.');
+        alert('System successfully cleared. All balances and items are now at zero.');
+      }
     }
   };
 
@@ -109,6 +125,7 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Cloud Config */}
         <section className="bg-slate-900 p-8 rounded-[32px] shadow-2xl space-y-6 text-white">
           <h3 className="text-lg font-black border-b border-slate-800 pb-4 flex items-center gap-2">
             <Database size={18} /> Supabase Cloud Configuration
@@ -121,14 +138,9 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Supabase API Key (anon public)</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Supabase API Key</label>
               <input type="password" value={settings.supabaseKey || ''} onChange={e => setSettings({...settings, supabaseKey: e.target.value})} className={`w-full px-4 py-3 bg-slate-800 border-none rounded-2xl outline-none font-bold text-xs transition-all ${settings.supabaseKey?.startsWith('sbp_') ? 'text-rose-400 ring-2 ring-rose-500/50' : 'text-emerald-400'}`} placeholder="eyJ..." />
-              {settings.supabaseKey?.startsWith('sbp_') && (
-                <p className="text-[10px] font-bold text-rose-400 flex items-center gap-1 mt-1">
-                  <Info size={10} /> Management Token (sbp_) detected! Use the 'anon public' key instead.
-                </p>
-              )}
-              <p className="text-[9px] text-slate-500 font-medium px-1">Must start with <strong>eyJ...</strong> found in Settings > API > anon (public)</p>
+              <p className="text-[9px] text-slate-500 font-medium px-1">Found in Settings > API > anon (public)</p>
             </div>
 
             <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-2xl border border-slate-700">
@@ -137,11 +149,11 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <button onClick={handleCloudBackup} disabled={isSyncing} className="py-4 bg-emerald-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 flex items-center justify-center gap-2">
+              <button onClick={handleCloudBackup} disabled={isSyncing} className="py-4 bg-emerald-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 flex items-center justify-center gap-2 transition-colors">
                 {isSyncing ? <RefreshCw className="animate-spin" size={14}/> : <ShieldCheck size={14}/>}
                 Push Now
               </button>
-              <button onClick={handleCloudPull} disabled={isPulling} className="py-4 bg-slate-700 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-600 flex items-center justify-center gap-2">
+              <button onClick={handleCloudPull} disabled={isPulling} className="py-4 bg-slate-700 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-600 flex items-center justify-center gap-2 transition-colors">
                 {isPulling ? <RefreshCw className="animate-spin" size={14}/> : <Search size={14}/>}
                 Pull State
               </button>
@@ -149,6 +161,7 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
           </div>
         </section>
 
+        {/* Identity */}
         <section className="bg-white p-8 rounded-[32px] border shadow-sm space-y-6">
           <h3 className="text-lg font-black text-slate-800 border-b pb-4 flex items-center gap-2">
             <Globe size={18} className="text-blue-500" /> Business Identity
@@ -168,6 +181,7 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
           </div>
         </section>
 
+        {/* Finance */}
         <section className="bg-white p-8 rounded-[32px] border shadow-sm space-y-6">
           <h3 className="text-lg font-black text-slate-800 border-b pb-4 flex items-center gap-2">
             <TrendingUp size={18} className="text-emerald-500" /> Financial Settings
@@ -184,20 +198,43 @@ const SettingsView: React.FC<Props> = ({ data, setData, addLog }) => {
           </div>
         </section>
 
-        <section className="bg-rose-50 p-8 rounded-[40px] border border-rose-100 shadow-sm space-y-6 flex flex-col justify-center">
+        {/* Maintenance */}
+        <section className="bg-rose-50 p-8 rounded-[32px] border border-rose-100 shadow-sm space-y-6">
           <h3 className="text-lg font-black text-rose-800 border-b border-rose-200 pb-4 flex items-center gap-2">
-            <AlertTriangle size={20} className="text-rose-600" /> Disaster Recovery
+            <AlertTriangle size={18} className="text-rose-600" /> System Maintenance
           </h3>
-          <div className="flex flex-col gap-3">
-             <button onClick={backupData} className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 transition-all">
-                <Download size={18} /> Export JSON Bundle
-             </button>
-             <label className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 transition-all cursor-pointer">
-                <Upload size={18} /> Restore Local File
-                <input type="file" accept=".json" onChange={restoreData} className="hidden" />
-             </label>
-             <button onClick={() => { if(confirm("This will WIPE all local data. Continue?")) { localStorage.clear(); window.location.reload(); } }} className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black shadow-lg hover:bg-rose-700 transition-all">
-               Factory Reset Local
+          <div className="space-y-4">
+             <div className="p-4 bg-white rounded-2xl border border-rose-100 space-y-3">
+                <p className="text-xs font-bold text-rose-700 mb-2 uppercase tracking-tight">Danger Zone Operations</p>
+                
+                <button 
+                  onClick={handleFreshFinancialStart}
+                  className="w-full py-4 bg-amber-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-amber-700 transition-all shadow-lg flex items-center justify-center gap-2"
+                >
+                  <RotateCcw size={16} /> Fresh Financial Start
+                </button>
+                <p className="text-[9px] text-slate-400 font-medium text-center uppercase tracking-widest">
+                  Resets Money + History | Keeps Products & Settings
+                </p>
+
+                <div className="h-px bg-slate-100 my-2" />
+
+                <button 
+                  onClick={handleMasterClear}
+                  className="w-full py-4 bg-rose-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg flex items-center justify-center gap-2"
+                >
+                  <Trash2 size={16} /> Master System Clear
+                </button>
+                <p className="text-[9px] text-slate-400 font-medium text-center uppercase tracking-widest">
+                  Zeroes Everything (Balances + Stock + History)
+                </p>
+             </div>
+             
+             <button 
+                onClick={() => { if(confirm("This will permanently WIPE all local storage data. Continue?")) { localStorage.clear(); window.location.reload(); } }}
+                className="w-full py-3 bg-white border border-rose-200 text-rose-600 rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-colors"
+             >
+                Factory Reset Local Device
              </button>
           </div>
         </section>
